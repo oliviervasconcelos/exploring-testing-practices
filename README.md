@@ -44,8 +44,64 @@ Escolha uma prática ou dado de teste relevante e explique com suas próprias pa
 
 ## Respostas
 
-Repositório: `<URL_DO_REPOSITÓRIO>`
+Repositório: https://github.com/pallets/flask
 
-URL TestMiner: `<URL_NO_TESTMINER>`
+URL TestMiner: https://andrehora.github.io/testminer/#pallets/flask
 
-Explicação: `<SUA_EXPLICAÇÃO>`
+Explicação:
+
+### Visão geral dos dados
+
+O Flask é um micro-framework web em Python. Segundo a classificação do TestMiner (branch `main`), os arquivos do repositório se dividem assim:
+
+| Categoria     | Arquivos |
+|---------------|---------:|
+| Source        | 155 |
+| Tests         | 36 |
+| Test Helpers  | 35 |
+| CI Tests      | 1 (`.github/workflows/tests.yaml`) |
+
+Não aparecem arquivos de *mocks*, *snapshots*, *e2e* ou *benchmarks*. Pela visão **Test Location**, quase todos os testes ficam numa pasta `tests/` na raiz, separada do código em `src/flask/`. Cada módulo do framework tem seu arquivo de teste com o prefixo `test_` (`test_blueprints.py`, `test_cli.py`, `test_config.py`, `test_templating.py`...), que é a convenção que o **pytest** usa para encontrar testes automaticamente.
+
+### Prática escolhida: fixtures compartilhadas no `conftest.py`
+
+O que mais me chamou atenção foi o número de *test helpers* (35), quase igual ao de arquivos de teste (36). Isso mostra que o Flask investe bastante em **infraestrutura de teste**, e não só nos testes em si. O centro dessa infraestrutura é o arquivo `tests/conftest.py`, que define **fixtures** do pytest:
+
+```python
+@pytest.fixture
+def app():
+    app = Flask("flask_test", root_path=os.path.dirname(__file__))
+    app.config.update(TESTING=True, SECRET_KEY="test key")
+    return app
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+```
+
+Uma fixture é uma função que prepara algo de que o teste precisa (o *setup*). O teste só declara o nome da fixture como parâmetro e o pytest injeta o objeto pronto:
+
+```python
+def test_session_path(app, client):
+    app.config.update(APPLICATION_ROOT="/foo")
+    ...
+    rv = client.get("/", "http://example.com:8080/foo")
+    assert "path=/foo" in rv.headers["set-cookie"].lower()
+```
+
+Com isso, **cada teste recebe uma aplicação nova e isolada**, então um teste não interfere no outro e não é preciso repetir o código de criação da app em todos os arquivos. Em `test_basic.py`, por exemplo, há 90 funções de teste, e 47 delas usam a fixture `client`.
+
+O `conftest.py` também tem duas fixtures `autouse=True`, que rodam automaticamente em **todos** os testes:
+
+- `_standard_os_environ`: limpa variáveis de ambiente como `FLASK_APP` e `FLASK_DEBUG` antes de cada teste, para que o ambiente da máquina não mude o resultado (evita testes "flaky");
+- `leak_detector`: depois de cada teste, verifica se algum *app context* ficou aberto e faz o teste falhar se sobrou algum. Ou seja, ele garante que os testes "limpam a sujeira" que deixam.
+
+Os outros *test helpers* que o TestMiner encontrou vão na mesma linha: `tests/test_apps/` tem pequenas aplicações Flask de exemplo (`helloworld`, `cliapp`, `blueprintapp`) usadas para testar o carregamento de apps pela CLI, e `tests/templates/` e `tests/static/` guardam templates e arquivos estáticos usados como dados de entrada nos testes de renderização.
+
+### Uma observação sobre a ferramenta
+
+O TestMiner classifica arquivos por nome, então alguns casos não são exatamente "testes". O `src/flask/testing.py` aparece como teste, mas na verdade é **código de produção**: é o módulo que oferece o `FlaskClient` (`app.test_client()`) aos usuários do framework. Isso também diz algo sobre o projeto: o Flask não só tem testes, ele também **fornece ferramentas de teste** para quem constrói aplicações com ele. É exatamente esse cliente que as fixtures acima usam. Do mesmo jeito, `docs/testing.rst` é documentação sobre como testar apps Flask, e não um teste.
+
+### Conclusão
+
+O Flask usa uma prática bem consolidada no ecossistema Python: testes com pytest numa pasta separada, um arquivo por módulo e *fixtures* centralizadas no `conftest.py`. Essas fixtures dão **reuso** (menos código repetido), **isolamento** (cada teste tem uma app nova e um ambiente limpo) e **verificação automática de vazamentos** entre testes. A quantidade de *test helpers* mostrada pelo TestMiner reflete esse investimento em uma base de testes fácil de manter.
